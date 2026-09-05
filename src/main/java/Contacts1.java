@@ -1,5 +1,8 @@
+import java.util.ArrayList;
+import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Scanner;
-
+import java.util.regex.Pattern;
 
 /**
  * This class is used to maintain a list of person data which are saved
@@ -7,20 +10,16 @@ import java.util.Scanner;
  **/
 public class Contacts1 {
 
-
-    /**
-     * Version info of the program.
-     */
+    /** Version info of the program. */
     private static final String VERSION = "Contacts - Version 1.0";
 
     /**
-     * A decorative prefix added to the beginning of lines printed by AddressBook
+     * A decorative prefix added to the beginning of lines printed by AddressBook.
+     * LS appends this prefix after each line separator so multi-line messages stay aligned.
      */
     private static final String LINE_PREFIX = "|| ";
 
-    /**
-     * A platform independent line separator.
-     */
+    /** A platform independent line separator, with line prefix for aligned output. */
     private static final String LS = System.lineSeparator() + LINE_PREFIX;
 
     /*
@@ -28,7 +27,7 @@ public class Contacts1 {
      * These messages shown to the user are defined in one place for convenient
      * editing and proof reading. Such messages are considered part of the UI
      * and may be subjected to review by UI experts or technical writers. Note
-     * that Some of the strings below include '%1$s' etc to mark the locations
+     * that some of the strings below include '%1$s' etc to mark the locations
      * at which java String.format(...) method can insert values.
      * =========================================================================
      */
@@ -43,6 +42,8 @@ public class Contacts1 {
     private static final String MESSAGE_INVALID_COMMAND_FORMAT = "Invalid command format: %1$s " + LS + "%2$s";
     private static final String MESSAGE_PERSONS_FOUND_OVERVIEW = "%1$d persons found!";
     private static final String MESSAGE_WELCOME = "Welcome to Contacts!";
+    private static final String MESSAGE_CAPACITY_FULL = "Cannot add person: contact list is full (%1$d capacity reached).";
+    private static final String MESSAGE_CAPACITY_WARNING = "Warning: contact list is almost full (%1$d/%2$d used).";
 
     // These are the prefix strings to define the data type of a command parameter
     private static final String PERSON_DATA_PREFIX_PHONE = "p/";
@@ -73,7 +74,6 @@ public class Contacts1 {
 
     private static final String DIVIDER = "===================================================";
 
-
     /* We use a String array to store details of a single person.
      * The constants given below are the indexes for the different data elements of a person
      * used by the internal String[] storage format.
@@ -83,20 +83,23 @@ public class Contacts1 {
     private static final int PERSON_DATA_INDEX_PHONE = 1;
     private static final int PERSON_DATA_INDEX_EMAIL = 2;
 
-    /**
-     * The number of data elements for a single person.
-     */
+    /** The number of data elements for a single person. */
     private static final int PERSON_DATA_COUNT = 3;
 
-    /**
-     * Maximum number of persons that can be held.
-     */
+    /** Maximum number of persons that can be held. */
     private static final int CAPACITY = 100;
 
-    /**
-     * If the first non-whitespace character in a user's input line is this, that line will be ignored.
-     */
+    /** Warn the user when this many slots remain. */
+    private static final int CAPACITY_WARNING_THRESHOLD = 10;
+
+    /** If the first non-whitespace character in a user's input line is this, that line will be ignored. */
     private static final char INPUT_COMMENT_MARKER = '#';
+
+    /** Basic email pattern: requires local@domain.tld format. */
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^\\S+@\\S+\\.\\S+$");
+
+    /** Phone must contain only digits, spaces, hyphens, or parentheses, and have at least 3 digits. */
+    private static final Pattern PHONE_PATTERN = Pattern.compile("^[\\d\\s()+-]+$");
 
     /*
      * This variable is declared for the whole class (instead of declaring it
@@ -107,14 +110,10 @@ public class Contacts1 {
     private static final Scanner SCANNER = new Scanner(System.in);
 
     /**
-     * List of all persons.
+     * List of all persons. Using ArrayList removes the fixed-size constraint
+     * and the risk of ArrayIndexOutOfBoundsException on overflow.
      */
-    private static String[][] allPersons;
-
-    /**
-     * Total number of persons in the list
-     */
-    private static int count;
+    private static final List<String[]> allPersons = new ArrayList<>();
 
 
     /*
@@ -133,7 +132,6 @@ public class Contacts1 {
      * Initializes the application and starts the interaction with the user.
      */
     public static void main(String[] args) {
-        initAddressBook();
         showWelcomeMessage();
         while (true) {
             String userCommand = getUserInput();
@@ -143,14 +141,6 @@ public class Contacts1 {
         }
     }
 
-    /*
-     * NOTE : =============================================================
-     * The method header comment can be omitted if the method is trivial
-     * and the header comment is going to be almost identical to the method
-     * signature anyway.
-     * ====================================================================
-     */
-
     private static void showWelcomeMessage() {
         showToUser(DIVIDER, DIVIDER, VERSION, MESSAGE_WELCOME, DIVIDER);
     }
@@ -159,24 +149,12 @@ public class Contacts1 {
         showToUser(result, DIVIDER);
     }
 
-    /*
-     * NOTE : =============================================================
-     * Parameter description can be omitted from the method header comment
-     * if the parameter name is self-explanatory.
-     * In the method below, '@param userInput' comment has been omitted.
-     * ====================================================================
-     */
-
-    /**
-     * Echoes the user input back to the user.
-     */
+    /** Echoes the user input back to the user. */
     private static void echoUserCommand(String userCommand) {
         showToUser("[Command entered:" + userCommand + "]");
     }
 
-    /**
-     * Displays the goodbye message and exits the runtime.
-     */
+    /** Displays the goodbye message and exits the runtime. */
     private static void exitProgram() {
         showToUser(MESSAGE_GOODBYE, DIVIDER, DIVIDER);
         System.exit(0);
@@ -217,7 +195,7 @@ public class Contacts1 {
     }
 
     /**
-     * Splits raw user input into command word and command arguments string
+     * Splits raw user input into command word and command arguments string.
      *
      * @return size 2 array; first element is the command type and second element is the arguments string
      */
@@ -244,16 +222,23 @@ public class Contacts1 {
      * @return feedback display message for the operation result
      */
     private static String executeAddPerson(String commandArgs) {
-        // try decoding a person from the raw args
-        final String[] decodeResult = decodePersonFromString(commandArgs);
+        if (allPersons.size() >= CAPACITY) {
+            return String.format(MESSAGE_CAPACITY_FULL, CAPACITY);
+        }
 
-        // checks if args are valid (decode result will not be present if the person is invalid)
+        final String[] decodeResult = decodePersonFromString(commandArgs);
         if (decodeResult == null) {
             return getMessageForInvalidCommandInput(COMMAND_ADD_WORD, getUsageInfoForAddCommand());
         }
 
-        // add the person as specified
         addPersonToAddressBook(decodeResult);
+
+        // warn when nearing capacity
+        int remaining = CAPACITY - allPersons.size();
+        if (remaining <= CAPACITY_WARNING_THRESHOLD) {
+            showToUser(String.format(MESSAGE_CAPACITY_WARNING, allPersons.size(), CAPACITY));
+        }
+
         return getMessageForSuccessfulAddPerson(decodeResult);
     }
 
@@ -262,7 +247,6 @@ public class Contacts1 {
      *
      * @param addedPerson person who was successfully added
      * @return successful add person feedback message
-     * @see #executeAddPerson(String)
      */
     private static String getMessageForSuccessfulAddPerson(String[] addedPerson) {
         return String.format(MESSAGE_ADDED,
@@ -272,21 +256,15 @@ public class Contacts1 {
     /**
      * Constructs a feedback message to summarise an operation that displayed a listing of persons.
      *
-     * @param personsDisplayed used to generate summary
      * @return summary message for persons displayed
      */
-    private static String getMessageForPersonsDisplayedSummary(String[][] personsDisplayed) {
-        return String.format(MESSAGE_PERSONS_FOUND_OVERVIEW, count);
+    private static String getMessageForPersonsDisplayedSummary() {
+        return String.format(MESSAGE_PERSONS_FOUND_OVERVIEW, allPersons.size());
     }
 
-
-    /**
-     * Clears all persons in the address book.
-     *
-     * @return feedback display message for the operation result
-     */
+    /** Clears all persons in the address book. */
     private static String executeClearAddressBook() {
-        initAddressBook();
+        allPersons.clear();
         return MESSAGE_ADDRESSBOOK_CLEARED;
     }
 
@@ -296,17 +274,15 @@ public class Contacts1 {
      * @return feedback display message for the operation result
      */
     private static String executeListAllPersonsInAddressBook() {
-        String[][] toBeDisplayed = getAllPersonsInAddressBook();
-        showToUser(toBeDisplayed);
-        return getMessageForPersonsDisplayedSummary(toBeDisplayed);
+        showToUser(getDisplayString());
+        return getMessageForPersonsDisplayedSummary();
     }
 
-    /**
-     * Requests to terminate the program.
-     */
+    /** Requests to terminate the program. */
     private static void executeExitProgramRequest() {
         exitProgram();
     }
+
 
     /*
      * ===========================================
@@ -316,18 +292,25 @@ public class Contacts1 {
 
     /**
      * Prompts for the command and reads the text entered by the user.
-     * Ignores lines with first non-whitespace char equal to {@link #INPUT_COMMENT_MARKER} (considered comments)
+     * Ignores lines with first non-whitespace char equal to {@link #INPUT_COMMENT_MARKER} (considered comments).
+     * Exits gracefully if the input stream closes unexpectedly.
      *
      * @return full line entered by the user
      */
     private static String getUserInput() {
-        System.out.print(LINE_PREFIX + "Enter command: ");
-        String inputLine = SCANNER.nextLine();
-        // silently consume all blank and comment lines
-        while (inputLine.trim().isEmpty() || inputLine.trim().charAt(0) == INPUT_COMMENT_MARKER) {
-            inputLine = SCANNER.nextLine();
+        try {
+            System.out.print(LINE_PREFIX + "Enter command: ");
+            String inputLine = SCANNER.nextLine();
+            // silently consume all blank and comment lines
+            while (inputLine.trim().isEmpty() || inputLine.trim().charAt(0) == INPUT_COMMENT_MARKER) {
+                inputLine = SCANNER.nextLine();
+            }
+            return inputLine;
+        } catch (NoSuchElementException e) {
+            // input stream closed (e.g. end of piped input); exit cleanly
+            exitProgram();
+            return ""; // unreachable, but satisfies compiler
         }
-        return inputLine;
     }
 
     /*
@@ -337,38 +320,23 @@ public class Contacts1 {
      * ====================================================================
      */
 
-    /**
-     * Shows a message to the user
-     */
+    /** Shows one or more messages to the user, each prefixed with LINE_PREFIX. */
     private static void showToUser(String... message) {
         for (String m : message) {
             System.out.println(LINE_PREFIX + m);
         }
     }
 
-    /**
-     * Shows the list of persons to the user.
-     * The list will be indexed, starting from 1.
-     *
-     */
-    private static void showToUser(String[][] persons) {
-        String listAsString = getDisplayString(persons);
-        showToUser(listAsString);
-    }
-
-    /**
-     * Returns the display string representation of the list of persons.
-     */
-    private static String getDisplayString(String[][] persons) {
-        final StringBuilder messageAccumulator = new StringBuilder();
-        for (int i = 0; i < count; i++) {
-            final String[] person = persons[i];
-            final int displayIndex = i + 1;
-            messageAccumulator.append('\t')
-                    .append(getIndexedPersonListElementMessage(displayIndex, person))
-                    .append(LS);
+    /** Returns the display string representation of all persons, indexed from 1. */
+    private static String getDisplayString() {
+        final StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < allPersons.size(); i++) {
+            final String[] person = allPersons.get(i);
+            sb.append('\t')
+              .append(getIndexedPersonListElementMessage(i + 1, person))
+              .append(LS);
         }
-        return messageAccumulator.toString();
+        return sb.toString();
     }
 
     /**
@@ -394,29 +362,9 @@ public class Contacts1 {
                 getNameFromPerson(person), getPhoneFromPerson(person), getEmailFromPerson(person));
     }
 
-    /**
-     * Adds a person to the address book. Saves changes to storage file.
-     *
-     * @param person to add
-     */
+    /** Adds a person to the address book. */
     private static void addPersonToAddressBook(String[] person) {
-        allPersons[count] = person;
-        count++;
-    }
-
-    /**
-     * Returns all persons in the address book
-     */
-    private static String[][] getAllPersonsInAddressBook() {
-        return allPersons;
-    }
-
-    /**
-     * Clears all persons in the address book and saves changes to file.
-     */
-    private static void initAddressBook() {
-        allPersons = new String[CAPACITY][PERSON_DATA_COUNT];
-        count = 0;
+        allPersons.add(person);
     }
 
 
@@ -426,29 +374,17 @@ public class Contacts1 {
      * ===========================================
      */
 
-    /**
-     * Returns the given person's name
-     *
-     * @param person whose name you want
-     */
+    /** Returns the given person's name. */
     private static String getNameFromPerson(String[] person) {
         return person[PERSON_DATA_INDEX_NAME];
     }
 
-    /**
-     * Returns given person's phone number
-     *
-     * @param person whose phone number you want
-     */
+    /** Returns given person's phone number. */
     private static String getPhoneFromPerson(String[] person) {
         return person[PERSON_DATA_INDEX_PHONE];
     }
 
-    /**
-     * Returns given person's email
-     *
-     * @param person whose email you want
-     */
+    /** Returns given person's email. */
     private static String getEmailFromPerson(String[] person) {
         return person[PERSON_DATA_INDEX_EMAIL];
     }
@@ -470,14 +406,12 @@ public class Contacts1 {
     }
 
     /**
-     * Decodes a person from it's supposed string representation.
+     * Decodes a person from its supposed string representation.
      *
      * @param encoded string to be decoded
-     * @return if cannot decode: empty Optional
-     * else: Optional containing decoded person
+     * @return decoded person, or null if the string is not a valid person representation
      */
     private static String[] decodePersonFromString(String encoded) {
-        // check that we can extract the parts of a person from the encoded string
         if (!isPersonDataExtractableFrom(encoded)) {
             return null;
         }
@@ -486,10 +420,8 @@ public class Contacts1 {
                 extractPhoneFromPersonString(encoded),
                 extractEmailFromPersonString(encoded)
         );
-        // check that the constructed person is valid
         return isPersonDataValid(decodedPerson) ? decodedPerson : null;
     }
-
 
     /**
      * Returns true if person data (email, name, phone etc) can be extracted from the argument string.
@@ -500,14 +432,14 @@ public class Contacts1 {
     private static boolean isPersonDataExtractableFrom(String personData) {
         final String matchAnyPersonDataPrefix = PERSON_DATA_PREFIX_PHONE + '|' + PERSON_DATA_PREFIX_EMAIL;
         final String[] splitArgs = personData.trim().split(matchAnyPersonDataPrefix);
-        return splitArgs.length == 3 // 3 arguments
-                && !splitArgs[0].isEmpty() // non-empty arguments
+        return splitArgs.length == 3
+                && !splitArgs[0].isEmpty()
                 && !splitArgs[1].isEmpty()
                 && !splitArgs[2].isEmpty();
     }
 
     /**
-     * Extracts substring representing person name from person string representation
+     * Extracts substring representing person name from person string representation.
      *
      * @param encoded person string representation
      * @return name argument
@@ -515,13 +447,12 @@ public class Contacts1 {
     private static String extractNameFromPersonString(String encoded) {
         final int indexOfPhonePrefix = encoded.indexOf(PERSON_DATA_PREFIX_PHONE);
         final int indexOfEmailPrefix = encoded.indexOf(PERSON_DATA_PREFIX_EMAIL);
-        // name is leading substring up to first data prefix symbol
         int indexOfFirstPrefix = Math.min(indexOfEmailPrefix, indexOfPhonePrefix);
         return encoded.substring(0, indexOfFirstPrefix).trim();
     }
 
     /**
-     * Extracts substring representing phone number from person string representation
+     * Extracts substring representing phone number from person string representation.
      *
      * @param encoded person string representation
      * @return phone number argument WITHOUT prefix
@@ -529,22 +460,17 @@ public class Contacts1 {
     private static String extractPhoneFromPersonString(String encoded) {
         final int indexOfPhonePrefix = encoded.indexOf(PERSON_DATA_PREFIX_PHONE);
         final int indexOfEmailPrefix = encoded.indexOf(PERSON_DATA_PREFIX_EMAIL);
-
-        // phone is last arg, target is from prefix to end of string
         if (indexOfPhonePrefix > indexOfEmailPrefix) {
-            return removePrefixSign(encoded.substring(indexOfPhonePrefix, encoded.length()).trim(),
-                    PERSON_DATA_PREFIX_PHONE);
-
-            // phone is middle arg, target is from own prefix to next prefix
+            // phone is last arg
+            return stripPrefix(encoded.substring(indexOfPhonePrefix).trim(), PERSON_DATA_PREFIX_PHONE);
         } else {
-            return removePrefixSign(
-                    encoded.substring(indexOfPhonePrefix, indexOfEmailPrefix).trim(),
-                    PERSON_DATA_PREFIX_PHONE);
+            // phone is middle arg
+            return stripPrefix(encoded.substring(indexOfPhonePrefix, indexOfEmailPrefix).trim(), PERSON_DATA_PREFIX_PHONE);
         }
     }
 
     /**
-     * Extracts substring representing email from person string representation
+     * Extracts substring representing email from person string representation.
      *
      * @param encoded person string representation
      * @return email argument WITHOUT prefix
@@ -552,24 +478,19 @@ public class Contacts1 {
     private static String extractEmailFromPersonString(String encoded) {
         final int indexOfPhonePrefix = encoded.indexOf(PERSON_DATA_PREFIX_PHONE);
         final int indexOfEmailPrefix = encoded.indexOf(PERSON_DATA_PREFIX_EMAIL);
-
-        // email is last arg, target is from prefix to end of string
         if (indexOfEmailPrefix > indexOfPhonePrefix) {
-            return removePrefixSign(encoded.substring(indexOfEmailPrefix, encoded.length()).trim(),
-                    PERSON_DATA_PREFIX_EMAIL);
-
-            // email is middle arg, target is from own prefix to next prefix
+            // email is last arg
+            return stripPrefix(encoded.substring(indexOfEmailPrefix).trim(), PERSON_DATA_PREFIX_EMAIL);
         } else {
-            return removePrefixSign(
-                    encoded.substring(indexOfEmailPrefix, indexOfPhonePrefix).trim(),
-                    PERSON_DATA_PREFIX_EMAIL);
+            // email is middle arg
+            return stripPrefix(encoded.substring(indexOfEmailPrefix, indexOfPhonePrefix).trim(), PERSON_DATA_PREFIX_EMAIL);
         }
     }
 
     /**
-     * Returns true if the given person's data fields are valid
+     * Returns true if the given person's data fields are all valid.
      *
-     * @param person String array representing the person (used in internal data)
+     * @param person String array representing the person
      */
     private static boolean isPersonDataValid(String[] person) {
         return isValidName(person[PERSON_DATA_INDEX_NAME])
@@ -578,34 +499,27 @@ public class Contacts1 {
     }
 
     /**
-     * Returns true if the given string as a legal person name
-     *
-     * @param name to be validated
+     * Returns true if the given string is a legal person name.
+     * Name must be non-empty after trimming.
      */
     private static boolean isValidName(String name) {
-        return !name.isEmpty();
-        //TODO: implement a better validation
+        return !name.trim().isEmpty();
     }
 
     /**
-     * Returns true if the given string as a legal person phone number
-     *
-     * @param phone to be validated
+     * Returns true if the given string is a legal person phone number.
+     * Phone must be non-empty and contain only digits, spaces, hyphens, plus signs, or parentheses.
      */
     private static boolean isValidPhone(String phone) {
-        return !phone.isEmpty();
-        //TODO: implement a better validation
+        return !phone.isEmpty() && PHONE_PATTERN.matcher(phone).matches();
     }
 
     /**
-     * Returns true if the given string is a legal person email
-     *
-     * @param email to be validated
-     * @return whether arg is a valid person email
+     * Returns true if the given string is a legal person email.
+     * Must match the pattern local@domain.tld.
      */
     private static boolean isValidEmail(String email) {
-        return !email.isEmpty() && email.contains("@");
-        //TODO: implement a better validation
+        return !email.isEmpty() && EMAIL_PATTERN.matcher(email).matches();
     }
 
 
@@ -615,9 +529,7 @@ public class Contacts1 {
      * ===============================================
      */
 
-    /**
-     * Returns usage info for all commands
-     */
+    /** Returns usage info for all commands. */
     private static String getUsageInfoForAllCommands() {
         return getUsageInfoForAddCommand() + LS
                 + getUsageInfoForViewCommand() + LS
@@ -626,42 +538,32 @@ public class Contacts1 {
                 + getUsageInfoForHelpCommand();
     }
 
-    /**
-     * Returns the string for showing 'add' command usage instruction
-     */
+    /** Returns the string for showing 'add' command usage instruction. */
     private static String getUsageInfoForAddCommand() {
         return String.format(MESSAGE_COMMAND_HELP, COMMAND_ADD_WORD, COMMAND_ADD_DESC) + LS
                 + String.format(MESSAGE_COMMAND_HELP_PARAMETERS, COMMAND_ADD_PARAMETERS) + LS
                 + String.format(MESSAGE_COMMAND_HELP_EXAMPLE, COMMAND_ADD_EXAMPLE) + LS;
     }
 
-    /**
-     * Returns string for showing 'clear' command usage instruction
-     */
+    /** Returns string for showing 'clear' command usage instruction. */
     private static String getUsageInfoForClearCommand() {
         return String.format(MESSAGE_COMMAND_HELP, COMMAND_CLEAR_WORD, COMMAND_CLEAR_DESC) + LS
                 + String.format(MESSAGE_COMMAND_HELP_EXAMPLE, COMMAND_CLEAR_EXAMPLE) + LS;
     }
 
-    /**
-     * Returns the string for showing 'view' command usage instruction
-     */
+    /** Returns the string for showing 'list' command usage instruction. */
     private static String getUsageInfoForViewCommand() {
         return String.format(MESSAGE_COMMAND_HELP, COMMAND_LIST_WORD, COMMAND_LIST_DESC) + LS
                 + String.format(MESSAGE_COMMAND_HELP_EXAMPLE, COMMAND_LIST_EXAMPLE) + LS;
     }
 
-    /**
-     * Returns string for showing 'help' command usage instruction
-     */
+    /** Returns string for showing 'help' command usage instruction. */
     private static String getUsageInfoForHelpCommand() {
         return String.format(MESSAGE_COMMAND_HELP, COMMAND_HELP_WORD, COMMAND_HELP_DESC) + LS
                 + String.format(MESSAGE_COMMAND_HELP_EXAMPLE, COMMAND_HELP_EXAMPLE);
     }
 
-    /**
-     * Returns the string for showing 'exit' command usage instruction
-     */
+    /** Returns the string for showing 'exit' command usage instruction. */
     private static String getUsageInfoForExitCommand() {
         return String.format(MESSAGE_COMMAND_HELP, COMMAND_EXIT_WORD, COMMAND_EXIT_DESC) + LS
                 + String.format(MESSAGE_COMMAND_HELP_EXAMPLE, COMMAND_EXIT_EXAMPLE) + LS;
@@ -675,14 +577,15 @@ public class Contacts1 {
      */
 
     /**
-     * Removes sign(p/, d/, etc) from parameter string
+     * Removes the leading prefix sign (e.g. "p/", "e/") from a parameter string.
+     * Uses substring rather than replace-all to avoid stripping occurrences elsewhere in the value.
      *
-     * @param s    Parameter as a string
-     * @param sign Parameter sign to be removed
-     * @return string without the sign
+     * @param s    parameter string starting with the sign
+     * @param sign prefix sign to remove
+     * @return string with the leading sign removed
      */
-    private static String removePrefixSign(String s, String sign) {
-        return s.replace(sign, "");
+    private static String stripPrefix(String s, String sign) {
+        return s.startsWith(sign) ? s.substring(sign.length()) : s;
     }
 
 }
